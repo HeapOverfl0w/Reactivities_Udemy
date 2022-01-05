@@ -17,6 +17,14 @@ using MediatR;
 using AutoMapper;
 using FluentValidation.AspNetCore;
 using API.Middleware;
+using Domain;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using API.Services;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Authorization;
 
 namespace API
 {
@@ -29,11 +37,41 @@ namespace API
             _config = configuration;
         }
 
+        private void ConfigureIdentity(IServiceCollection services)
+        {
+            services.AddIdentityCore<AppUser>(opt => {
+                opt.Password.RequireNonAlphanumeric = false;
+                opt.Password.RequireUppercase = false;
+                opt.Password.RequireDigit = false;
+            })
+            .AddEntityFrameworkStores<DataContext>()
+            .AddSignInManager<SignInManager<AppUser>>();
+
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["TokenKey"]));
+
+            services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                .AddJwtBearer(opt =>
+                {
+                    opt.TokenValidationParameters = new TokenValidationParameters
+                    {
+                        ValidateIssuerSigningKey = true,
+                        IssuerSigningKey = key,
+                        ValidateIssuer = false,
+                        ValidateAudience = false
+                    };
+                });
+            services.AddScoped<TokenService>();
+        }
+
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
-
-            services.AddControllers().AddFluentValidation(config => 
+            services.AddControllers(opt => 
+            {
+                var policy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();
+                opt.Filters.Add(new AuthorizeFilter(policy));
+            })
+            .AddFluentValidation(config => 
             {
                 config.RegisterValidatorsFromAssemblyContaining<Application.Activities.Create>();
             });
@@ -51,6 +89,8 @@ namespace API
             });
             services.AddMediatR(typeof(Application.Activities.List.Handler).Assembly);
             services.AddAutoMapper(typeof(Application.Core.MappingProfiles).Assembly);
+
+            ConfigureIdentity(services);
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -70,6 +110,7 @@ namespace API
 
             app.UseCors("CorsPolicy");
 
+            app.UseAuthentication();
             app.UseAuthorization();
 
             app.UseEndpoints(endpoints =>
